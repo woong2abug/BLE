@@ -3,23 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Bluetooth 기초 예제</title>
+    <title>Web Bluetooth BLE 연동 테스트</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
-        button { padding: 10px 15px; margin: 5px; font-size: 14px; cursor: pointer; }
-        #log { background: #f4f4f4; padding: 10px; border-radius: 5px; height: 200px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; line-height: 1.6; max-width: 600px; margin: 0 auto; }
+        h2 { font-size: 1.3rem; margin-bottom: 15px; }
+        .btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        button { flex: 1; padding: 12px; font-size: 14px; font-weight: bold; border: 1px solid #ccc; border-radius: 6px; background-color: #f8f9fa; cursor: pointer; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #log { background: #f1f3f5; padding: 12px; border-radius: 6px; height: 260px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px; border: 1px solid #dee2e6; margin-top: 10px; }
     </style>
 </head>
 <body>
 
     <h2>Web Bluetooth BLE 연결 및 통신</h2>
     
-    <div>
+    <div class="btn-group">
         <button id="btnConnect">1. BLE 기기 검색 및 연결</button>
         <button id="btnDisconnect" disabled>연결 해제</button>
     </div>
     
-    <div style="margin-top: 15px;">
+    <div class="btn-group">
         <button id="btnRead" disabled>2. 데이터 읽기 (Read)</button>
         <button id="btnWrite" disabled>3. 데이터 쓰기 (Write)</button>
     </div>
@@ -28,10 +31,9 @@
     <div id="log"></div>
 
     <script>
-        // Target GATT Service & Characteristic UUID 설정
-        // 테스트용 Custom UUID 또는 SIG Standard UUID 입력
-        const SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb'; // 예: 배터리 서비스 (Battery Service)
-        const CHARACTERISTIC_UUID = '00002a19-0000-1000-8000-00805f9b34fb'; // 예: 배터리 잔량 (Battery Level)
+        // 타겟 기기의 Service & Characteristic UUID 설정 (확인된 UUID로 변경 가능)
+        let SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb'; 
+        let CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb'; 
 
         let bluetoothDevice = null;
         let gattServer = null;
@@ -51,41 +53,53 @@
             }
 
             try {
-                log('🔍 BLE 기기 스캔 시작...');
+                log('🔍 주변 BLE 기기 스캔 시작...');
                 
-                // 디바이스 스캔 (보안 팝업 출력)
+                // 필터 없이 주변 모든 BLE 기기 스캔
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    // 특정 이름 prefix로 필터링 시 사용:
-                    // filters: [{ namePrefix: 'MYCOMPANY_' }],
-                    
-                    // 스캔할 서비스 UUID 지정 (필수)
-                    // filters: [{ services: [SERVICE_UUID] }],
-                    
-                    // 모든 장치를 스캔하고 싶을 경우 (optionalServices 필수 지정):
                     acceptAllDevices: true,
-                    optionalServices: [SERVICE_UUID]
+                    // 통신에 사용 가능한 대표적인 16bit 표준 및 커스텀 서비스 UUID 미리 허용
+                    optionalServices: [
+                        '0000ffe0-0000-1000-8000-00805f9b34fb', // 일반 커스텀 시리얼 서비스
+                        '0000fff0-0000-1000-8000-00805f9b34fb', 
+                        '0000180f-0000-1000-8000-00805f9b34fb', // Battery
+                        '0000180a-0000-1000-8000-00805f9b34fb', // Device Info
+                        SERVICE_UUID
+                    ]
                 });
 
-                log(`✅ 기기 선택됨: ${bluetoothDevice.name || '알 수 없는 기기'} (${bluetoothDevice.id})`);
+                log(`✅ 기기 선택됨: ${bluetoothDevice.name || '이름 없음'}`);
+                log(`🆔 디바이스 ID: ${bluetoothDevice.id}`);
 
-                // 연결 해제 이벤트 리스너 등록
                 bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
                 // GATT 서버 연결
                 log('🔌 GATT 서버에 연결 중...');
                 gattServer = await bluetoothDevice.gatt.connect();
 
-                // 서비스 가져오기
-                log('📡 Primary Service 요청 중...');
-                const service = await gattServer.getPrimaryService(SERVICE_UUID);
+                // 연결된 기기가 가진 모든 Primary Services 스캔
+                log('📡 기기 내부 Service(UUID) 탐색 중...');
+                const services = await gattServer.getPrimaryServices();
+                log(`🎉 성공적으로 연결되었습니다! (발견된 서비스: ${services.length}개)`);
 
-                // Characteristic 가져오기
-                log('📝 Characteristic 요청 중...');
-                targetCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                // 기기에 존재하는 서비스 UUID를 로그에 전부 출력
+                for (const service of services) {
+                    log(`  👉 Service UUID: ${service.uuid}`);
+                }
 
-                log('🎉 성공적으로 연결되었습니다! 데이터를 주고받을 준비가 되었습니다.');
-                
-                // UI 버튼 상태 업데이트
+                // 첫 번째 서비스에서 Characteristic 탐색 시도
+                if (services.length > 0) {
+                    try {
+                        const characteristics = await services[0].getCharacteristics();
+                        if (characteristics.length > 0) {
+                            targetCharacteristic = characteristics[0];
+                            log(`  📝 제어용 Characteristic 설정 완료: ${targetCharacteristic.uuid}`);
+                        }
+                    } catch (e) {
+                        log(`ℹ️ 특성(Characteristic) 자동 할당을 넘어가고 서비스 확인만 완료했습니다.`);
+                    }
+                }
+
                 updateUI(true);
 
             } catch (error) {
@@ -93,38 +107,33 @@
             }
         });
 
-        // 2. 데이터 읽기 (Read Characteristic)
+        // 2. 데이터 읽기
         document.getElementById('btnRead').addEventListener('click', async () => {
-            if (!targetCharacteristic) return;
+            if (!targetCharacteristic) {
+                log('❌ 데이터 읽기를 지원하는 Characteristic이 설정되지 않았습니다.');
+                return;
+            }
 
             try {
                 log('📖 데이터 읽기 요청 중...');
                 const dataView = await targetCharacteristic.readValue();
-                
-                // DataView 형태의 바이너리 데이터를 배열/문자열로 변환
                 const rawData = new Uint8Array(dataView.buffer);
-                log(`📥 수신된 Raw Data (Hex): ${Array.from(rawData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
-                
-                // 예: 배터리 수치(1바이트 정수)로 해석할 경우
-                if (rawData.length > 0) {
-                    log(`📥 해석된 값 (Decimal): ${rawData[0]}`);
-                }
+                log(`📥 수신 (Hex): ${Array.from(rawData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
             } catch (error) {
                 log(`❌ 데이터 읽기 실패: ${error.message}`);
             }
         });
 
-        // 3. 데이터 쓰기 (Write Characteristic)
+        // 3. 데이터 쓰기
         document.getElementById('btnWrite').addEventListener('click', async () => {
-            if (!targetCharacteristic) return;
+            if (!targetCharacteristic) {
+                log('❌ 데이터 쓰기를 지원하는 Characteristic이 설정되지 않았습니다.');
+                return;
+            }
 
             try {
-                // 송신할 바이너리 데이터 준비 (예: [0x01, 0xFF, 0x0A])
                 const sendData = new Uint8Array([0x01, 0xFF, 0x0A]);
-                
-                log(`📤 데이터 전송 중: ${Array.from(sendData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
-                
-                // Write Without Response 사용 시: writeValueWithoutResponse()
+                log(`📤 전송 데이터: ${Array.from(sendData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
                 await targetCharacteristic.writeValueWithResponse(sendData);
                 log('✅ 데이터 전송 성공!');
             } catch (error) {
