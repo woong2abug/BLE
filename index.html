@@ -11,7 +11,7 @@
         h2 { font-size: 1.2rem; margin-top: 0; margin-bottom: 12px; color: #000; }
         .form-group { margin-bottom: 12px; }
         label { display: block; font-size: 0.85rem; font-weight: 600; color: #8e8e93; margin-bottom: 4px; }
-        input[type="text"] { width: 100%; padding: 10px; font-size: 0.95rem; border: 1px solid #c7c7cc; border-radius: 8px; box-sizing: border-box; font-family: monospace; }
+        input[type="text"], select { width: 100%; padding: 10px; font-size: 0.95rem; border: 1px solid #c7c7cc; border-radius: 8px; box-sizing: border-box; font-family: monospace; }
         .btn-group { display: flex; gap: 8px; margin-top: 8px; }
         button { flex: 1; padding: 12px; font-size: 0.95rem; font-weight: 600; border: none; border-radius: 8px; background-color: var(--primary-color); color: white; cursor: pointer; }
         button:disabled { background-color: #aeaeb2; cursor: not-allowed; }
@@ -21,11 +21,13 @@
         .status-badge { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; background-color: #e5e5ea; color: #8e8e93; margin-bottom: 12px; }
         .status-badge.connected { background-color: #d1e7dd; color: #0f5132; }
         #log { background: #1c1c1e; color: #30d158; padding: 12px; border-radius: 8px; height: 200px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; line-height: 1.4; }
+        .checkbox-group { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.85rem; }
+        .checkbox-group input { width: auto; }
     </style>
 </head>
 <body>
 
-    <!-- 기존 프로비저닝 파라미터 카드 (유지) -->
+    <!-- 1. 기존 프로비저닝 파라미터 카드 -->
     <div class="card">
         <h2>🔑 프로비저닝 파라미터 설정</h2>
         <div class="form-group">
@@ -42,7 +44,7 @@
         </div>
     </div>
 
-    <!-- 기존 제어 카드 (유지) -->
+    <!-- 2. 기존 대상 모듈 제어 카드 -->
     <div class="card">
         <h2>📱 대상 모듈 제어</h2>
         <span id="connectionStatus" class="status-badge">연결 대기 중</span>
@@ -55,26 +57,37 @@
         </div>
     </div>
 
-    <!-- 🔥 새로 추가된 신규 카드: UART 문자열 전송 테스트 -->
+    <!-- 3. 개선된 UART 문자 발신 테스트 카드 -->
     <div class="card">
         <h2>💬 3. UART 문자 발신 테스트</h2>
+        <div class="form-group">
+            <label>전송 방식 선택</label>
+            <select id="writeType">
+                <option value="auto">자동 선택 (Auto Detect)</option>
+                <option value="response">Write With Response (응답 포함)</option>
+                <option value="noResponse">Write Without Response (응답 없음)</option>
+            </select>
+        </div>
         <div class="form-group">
             <label>전송할 문자열 (Text)</label>
             <input type="text" id="sendMsgInput" value="Hello BLE Mesh!" placeholder="전송할 텍스트 입력">
         </div>
-        <div class="btn-group">
+        <div class="checkbox-group">
+            <input type="checkbox" id="addCRLF" checked>
+            <label for="addCRLF">문자 끝에 줄바꿈(\r\n) 자동 추가</label>
+        </div>
+        <div class="btn-group" style="margin-top: 10px;">
             <button id="btnSendText" class="purple" disabled>문자 전송</button>
         </div>
     </div>
 
-    <!-- 기존 로그 카드 (유지) -->
+    <!-- 4. 실시간 로그 카드 -->
     <div class="card">
         <h2>📋 실시간 로그</h2>
         <div id="log"></div>
     </div>
 
     <script>
-        // 타겟 메인/보조 Service UUID
         const MAIN_SERVICE_UUID = '7941dc24-0ee5-a9e0-93f3-a3b50100406e';
         const SUB_SERVICE_UUID  = '0000feb3-0000-1000-8000-00805f9b34fb';
 
@@ -91,7 +104,7 @@
             logElem.scrollTop = logElem.scrollHeight;
         }
 
-        // 1. 기기 검색 및 페어링 (모든 BLE 기기 스캔)
+        // 1. 기기 검색 및 페어링
         document.getElementById('btnConnect').addEventListener('click', async () => {
             if (!navigator.bluetooth) {
                 log('❌ 이 브라우저는 Web Bluetooth를 지원하지 않습니다.');
@@ -119,24 +132,32 @@
                 log('🔌 GATT 서버 연결 중...');
                 gattServer = await bluetoothDevice.gatt.connect();
 
-                // Service 접근 시도
+                // 사용 가능한 서비스 탐색
                 try {
                     targetService = await gattServer.getPrimaryService(MAIN_SERVICE_UUID);
+                    log(`📌 메인 서비스 연결 성공 (${MAIN_SERVICE_UUID})`);
                 } catch (e) {
                     try {
                         targetService = await gattServer.getPrimaryService(SUB_SERVICE_UUID);
+                        log(`📌 보조 서비스 연결 성공 (${SUB_SERVICE_UUID})`);
                     } catch (err) {
-                        log(`ℹ️ 타겟 전용 서비스를 찾지 못해 모든 서비스 스캔을 시도합니다.`);
+                        log(`ℹ️ 기본 서비스 미발견. 전체 서비스 탐색 중...`);
                         const services = await gattServer.getPrimaryServices();
-                        if (services.length > 0) targetService = services[0];
+                        if (services.length > 0) {
+                            targetService = services[0];
+                            log(`📌 발견된 첫 번째 서비스로 연결: ${targetService.uuid}`);
+                        }
                     }
                 }
 
                 if (targetService) {
                     const characteristics = await targetService.getCharacteristics();
                     if (characteristics.length > 0) {
-                        targetCharacteristic = characteristics[0];
+                        // 쓰기(Write) 권한이 있는 특성 우선 탐색
+                        targetCharacteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse) || characteristics[0];
+                        
                         log(`✅ 통신 채널 준비 완료 (Char UUID: ${targetCharacteristic.uuid})`);
+                        log(`ℹ️ 지원 속성 -> Write: ${targetCharacteristic.properties.write}, WriteNoResp: ${targetCharacteristic.properties.writeWithoutResponse}`);
                         
                         statusBadge.innerText = `연결됨: ${bluetoothDevice.name || '기기'}`;
                         statusBadge.classList.add('connected');
@@ -153,7 +174,7 @@
             }
         });
 
-        // 2. 프로비저닝 데이터 패킷 구성 및 전송 (유지)
+        // 2. 프로비저닝 전송 (기존 제어 유지)
         document.getElementById('btnProvision').addEventListener('click', async () => {
             if (!targetCharacteristic) {
                 log('❌ 연결된 기기가 없습니다.');
@@ -176,12 +197,7 @@
                 log(`📤 프로비저닝 명령 전송 (${sendData.length} Bytes)...`);
                 log(`   할당 주소: 0x${addrVal.toString(16).padStart(4, '0').toUpperCase()}`);
 
-                if (targetCharacteristic.properties.write) {
-                    await targetCharacteristic.writeValueWithResponse(sendData);
-                } else {
-                    await targetCharacteristic.writeValueWithoutResponse(sendData);
-                }
-
+                await sendDataToChar(sendData);
                 log('🎉 프로비저닝 데이터 전송 성공!');
 
             } catch (error) {
@@ -189,38 +205,56 @@
             }
         });
 
-        // 🔥 새로 추가된 기능: 3. UART 문자열 발신 기능
+        // 3. UART 문자열 발신 기능 (개선됨)
         document.getElementById('btnSendText').addEventListener('click', async () => {
             if (!targetCharacteristic) {
                 log('❌ 연결된 기기가 없습니다.');
                 return;
             }
 
-            const text = document.getElementById('sendMsgInput').value;
+            let text = document.getElementById('sendMsgInput').value;
             if (!text) {
                 log('⚠️ 전송할 문자열을 입력하세요.');
                 return;
             }
 
+            if (document.getElementById('addCRLF').checked) {
+                text += "\r\n";
+            }
+
             try {
-                // 문자열을 UTF-8 바이트 배열로 변환
                 const encoder = new TextEncoder();
                 const sendData = encoder.encode(text);
 
-                log(`📤 문자열 전송: "${text}" (${sendData.length} Bytes)...`);
+                log(`📤 문자열 전송: "${text.trim()}" (${sendData.length} Bytes)...`);
 
-                if (targetCharacteristic.properties.write) {
-                    await targetCharacteristic.writeValueWithResponse(sendData);
-                } else {
-                    await targetCharacteristic.writeValueWithoutResponse(sendData);
-                }
-
-                log('✅ 문자열 발신 성공! PC 시리얼 터미널 수신을 확인하세요.');
+                await sendDataToChar(sendData);
+                log('✅ 문자열 전송 완료! PC 시리얼 터미널을 확인하세요.');
 
             } catch (error) {
                 log(`❌ 문자열 전송 실패: ${error.message}`);
             }
         });
+
+        // 공통 전송 함수 (전송 방식 및 속성 자동/수동 제어)
+        async function sendDataToChar(data) {
+            const writeType = document.getElementById('writeType').value;
+
+            if (writeType === 'response') {
+                await targetCharacteristic.writeValueWithResponse(data);
+            } else if (writeType === 'noResponse') {
+                await targetCharacteristic.writeValueWithoutResponse(data);
+            } else {
+                // Auto 옵션
+                if (targetCharacteristic.properties.write) {
+                    await targetCharacteristic.writeValueWithResponse(data);
+                } else if (targetCharacteristic.properties.writeWithoutResponse) {
+                    await targetCharacteristic.writeValueWithoutResponse(data);
+                } else {
+                    await targetCharacteristic.writeValue(data);
+                }
+            }
+        }
 
         // 연결 해제
         document.getElementById('btnDisconnect').addEventListener('click', () => {
@@ -240,7 +274,7 @@
             document.getElementById('btnConnect').disabled = connected;
             document.getElementById('btnDisconnect').disabled = !connected;
             document.getElementById('btnProvision').disabled = !connected;
-            document.getElementById('btnSendText').disabled = !connected; // 신규 버튼 동기화
+            document.getElementById('btnSendText').disabled = !connected;
         }
     </script>
 </body>
