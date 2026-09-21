@@ -3,22 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Bluetooth BLE 연동 테스트</title>
+    <title>MULTI-ROLE0 Web Bluetooth 연동</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; line-height: 1.6; max-width: 600px; margin: 0 auto; }
         h2 { font-size: 1.3rem; margin-bottom: 15px; }
         .btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
         button { flex: 1; padding: 12px; font-size: 14px; font-weight: bold; border: 1px solid #ccc; border-radius: 6px; background-color: #f8f9fa; cursor: pointer; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
-        #log { background: #f1f3f5; padding: 12px; border-radius: 6px; height: 260px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px; border: 1px solid #dee2e6; margin-top: 10px; }
+        #log { background: #f1f3f5; padding: 12px; border-radius: 6px; height: 280px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px; border: 1px solid #dee2e6; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <h2>Web Bluetooth BLE 연결 및 통신</h2>
+    <h2>MULTI-ROLE0 Web Bluetooth 연동</h2>
     
     <div class="btn-group">
-        <button id="btnConnect">1. BLE 기기 검색 및 연결</button>
+        <button id="btnConnect">1. 기기 검색 및 연결</button>
         <button id="btnDisconnect" disabled>연결 해제</button>
     </div>
     
@@ -31,12 +31,13 @@
     <div id="log"></div>
 
     <script>
-        // 타겟 기기의 Service & Characteristic UUID 설정 (확인된 UUID로 변경 가능)
-        let SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb'; 
-        let CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb'; 
+        // nRF Connect에서 확인된 128-bit 커스텀 Service UUID
+        const MAIN_SERVICE_UUID = '7941dc24-0ee5-a9e0-93f3-a3b50100406e'; 
+        const SUB_SERVICE_UUID  = '0000feb3-0000-1000-8000-00805f9b34fb'; // 0xFEB3
 
         let bluetoothDevice = null;
         let gattServer = null;
+        let targetService = null;
         let targetCharacteristic = null;
 
         const logElem = document.getElementById('log');
@@ -45,7 +46,7 @@
             logElem.scrollTop = logElem.scrollHeight;
         }
 
-        // 1. BLE 기기 검색 및 연결
+        // 1. 기기 검색 및 연결
         document.getElementById('btnConnect').addEventListener('click', async () => {
             if (!navigator.bluetooth) {
                 log('❌ 이 브라우저는 Web Bluetooth를 지원하지 않습니다.');
@@ -53,22 +54,20 @@
             }
 
             try {
-                log('🔍 주변 BLE 기기 스캔 시작...');
+                log('🔍 주변 BLE 기기 스캔 중...');
                 
-                // 필터 없이 주변 모든 BLE 기기 스캔
+                // MULTI-ROLE0 모듈에 존재하는 정확한 Service UUID들을 명시
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
-                    // 통신에 사용 가능한 대표적인 16bit 표준 및 커스텀 서비스 UUID 미리 허용
                     optionalServices: [
-                        '0000ffe0-0000-1000-8000-00805f9b34fb', // 일반 커스텀 시리얼 서비스
-                        '0000fff0-0000-1000-8000-00805f9b34fb', 
-                        '0000180f-0000-1000-8000-00805f9b34fb', // Battery
-                        '0000180a-0000-1000-8000-00805f9b34fb', // Device Info
-                        SERVICE_UUID
+                        MAIN_SERVICE_UUID,
+                        SUB_SERVICE_UUID,
+                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+                        '00001801-0000-1000-8000-00805f9b34fb'  // Generic Attribute
                     ]
                 });
 
-                log(`✅ 기기 선택됨: ${bluetoothDevice.name || '이름 없음'}`);
+                log(`✅ 기기 선택됨: ${bluetoothDevice.name || 'MULTI-ROLE0'}`);
                 log(`🆔 디바이스 ID: ${bluetoothDevice.id}`);
 
                 bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
@@ -76,41 +75,45 @@
                 // GATT 서버 연결
                 log('🔌 GATT 서버에 연결 중...');
                 gattServer = await bluetoothDevice.gatt.connect();
+                log('🎉 GATT 서버 연결 성공!');
 
-                // 연결된 기기가 가진 모든 Primary Services 스캔
-                log('📡 기기 내부 Service(UUID) 탐색 중...');
-                const services = await gattServer.getPrimaryServices();
-                log(`🎉 성공적으로 연결되었습니다! (발견된 서비스: ${services.length}개)`);
-
-                // 기기에 존재하는 서비스 UUID를 로그에 전부 출력
-                for (const service of services) {
-                    log(`  👉 Service UUID: ${service.uuid}`);
+                // 메인 커스텀 서비스 가져오기 시도
+                try {
+                    log(`📡 메인 서비스(${MAIN_SERVICE_UUID}) 접근 중...`);
+                    targetService = await gattServer.getPrimaryService(MAIN_SERVICE_UUID);
+                    log('✅ 메인 서비스 연결 완료!');
+                } catch (e) {
+                    log(`ℹ️ 메인 서비스 실패, 보조 서비스(${SUB_SERVICE_UUID})로 시도 중...`);
+                    targetService = await gattServer.getPrimaryService(SUB_SERVICE_UUID);
+                    log('✅ 보조 서비스 연결 완료!');
                 }
 
-                // 첫 번째 서비스에서 Characteristic 탐색 시도
-                if (services.length > 0) {
-                    try {
-                        const characteristics = await services[0].getCharacteristics();
-                        if (characteristics.length > 0) {
-                            targetCharacteristic = characteristics[0];
-                            log(`  📝 제어용 Characteristic 설정 완료: ${targetCharacteristic.uuid}`);
-                        }
-                    } catch (e) {
-                        log(`ℹ️ 특성(Characteristic) 자동 할당을 넘어가고 서비스 확인만 완료했습니다.`);
+                // 서비스 내의 Characteristic(특성) 스캔
+                if (targetService) {
+                    const characteristics = await targetService.getCharacteristics();
+                    log(`📝 서비스 내 발견된 Characteristic 개수: ${characteristics.length}개`);
+                    
+                    for (const char of characteristics) {
+                        log(`  👉 Char UUID: ${char.uuid}`);
+                    }
+
+                    if (characteristics.length > 0) {
+                        targetCharacteristic = characteristics[0]; // 첫 번째 Characteristic 선택
+                        log(`✅ 통신용 Target Characteristic 설정 완료!`);
                     }
                 }
 
                 updateUI(true);
 
             } catch (error) {
-                log(`❌ 연결 실패 또는 취소됨: ${error.message}`);
+                log(`❌ 연결 실패: ${error.message}`);
             }
         });
 
-        // 2. 데이터 읽기
+        // 2. 데이터 읽기 (Read)
         document.getElementById('btnRead').addEventListener('click', async () => {
             if (!targetCharacteristic) {
-                log('❌ 데이터 읽기를 지원하는 Characteristic이 설정되지 않았습니다.');
+                log('❌ 연결된 Characteristic이 없습니다.');
                 return;
             }
 
@@ -124,17 +127,26 @@
             }
         });
 
-        // 3. 데이터 쓰기
+        // 3. 데이터 쓰기 (Write)
         document.getElementById('btnWrite').addEventListener('click', async () => {
             if (!targetCharacteristic) {
-                log('❌ 데이터 쓰기를 지원하는 Characteristic이 설정되지 않았습니다.');
+                log('❌ 연결된 Characteristic이 없습니다.');
                 return;
             }
 
             try {
+                // 전송 테스트 데이터 (바이트 배열)
                 const sendData = new Uint8Array([0x01, 0xFF, 0x0A]);
-                log(`📤 전송 데이터: ${Array.from(sendData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
-                await targetCharacteristic.writeValueWithResponse(sendData);
+                log(`📤 데이터 전송 중: ${Array.from(sendData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
+                
+                // Write 속성에 맞춰 전송
+                if (targetCharacteristic.properties.write) {
+                    await targetCharacteristic.writeValueWithResponse(sendData);
+                } else if (targetCharacteristic.properties.writeWithoutResponse) {
+                    await targetCharacteristic.writeValueWithoutResponse(sendData);
+                } else {
+                    await targetCharacteristic.writeValueWithResponse(sendData);
+                }
                 log('✅ 데이터 전송 성공!');
             } catch (error) {
                 log(`❌ 데이터 전송 실패: ${error.message}`);
