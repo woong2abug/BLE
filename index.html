@@ -3,37 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MULTI-ROLE0 Web Bluetooth 연동</title>
+    <title>BLE 조명 스마트 프로비저너</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; line-height: 1.6; max-width: 600px; margin: 0 auto; }
-        h2 { font-size: 1.3rem; margin-bottom: 15px; }
-        .btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
-        button { flex: 1; padding: 12px; font-size: 14px; font-weight: bold; border: 1px solid #ccc; border-radius: 6px; background-color: #f8f9fa; cursor: pointer; }
-        button:disabled { opacity: 0.4; cursor: not-allowed; }
-        #log { background: #f1f3f5; padding: 12px; border-radius: 6px; height: 280px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px; border: 1px solid #dee2e6; margin-top: 10px; }
+        :root { --primary-color: #007aff; --success-color: #34c759; --danger-color: #ff3b30; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 16px; max-width: 600px; margin: 0 auto; background-color: #f2f2f7; color: #1c1c1e; }
+        .card { background: #ffffff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        h2 { font-size: 1.2rem; margin-top: 0; margin-bottom: 12px; color: #000; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.85rem; font-weight: 600; color: #8e8e93; margin-bottom: 4px; }
+        input[type="text"] { width: 100%; padding: 10px; font-size: 0.95rem; border: 1px solid #c7c7cc; border-radius: 8px; box-sizing: border-box; font-family: monospace; }
+        .btn-group { display: flex; gap: 8px; margin-top: 8px; }
+        button { flex: 1; padding: 12px; font-size: 0.95rem; font-weight: 600; border: none; border-radius: 8px; background-color: var(--primary-color); color: white; cursor: pointer; }
+        button:disabled { background-color: #aeaeb2; cursor: not-allowed; }
+        button.danger { background-color: var(--danger-color); }
+        button.success { background-color: var(--success-color); }
+        .status-badge { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; background-color: #e5e5ea; color: #8e8e93; margin-bottom: 12px; }
+        .status-badge.connected { background-color: #d1e7dd; color: #0f5132; }
+        #log { background: #1c1c1e; color: #30d158; padding: 12px; border-radius: 8px; height: 220px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; line-height: 1.4; }
     </style>
 </head>
 <body>
 
-    <h2>MULTI-ROLE0 Web Bluetooth 연동</h2>
-    
-    <div class="btn-group">
-        <button id="btnConnect">1. 기기 검색 및 연결</button>
-        <button id="btnDisconnect" disabled>연결 해제</button>
-    </div>
-    
-    <div class="btn-group">
-        <button id="btnRead" disabled>2. 데이터 읽기 (Read)</button>
-        <button id="btnWrite" disabled>3. 데이터 쓰기 (Write)</button>
+    <div class="card">
+        <h2>🔑 프로비저닝 파라미터 설정</h2>
+        <div class="form-group">
+            <label>NetKey (네트워크 키 - 16 Bytes Hex)</label>
+            <input type="text" id="netKey" value="70 72 6f 76 69 73 69 6f 6e 5f 6e 65 74 6b 65 79">
+        </div>
+        <div class="form-group">
+            <label>AppKey (애플리케이션 키 - 16 Bytes Hex)</label>
+            <input type="text" id="appKey" value="61 70 70 6c 69 63 61 74 69 6f 6e 5f 6b 65 79">
+        </div>
+        <div class="form-group">
+            <label>할당할 unicast Address (기기 고유 주소 - Hex)</label>
+            <input type="text" id="unicastAddr" value="0x0001" placeholder="예: 0x0001, 0x0002">
+        </div>
     </div>
 
-    <h3>로그 출력:</h3>
-    <div id="log"></div>
+    <div class="card">
+        <h2>📱 대상 모듈 제어</h2>
+        <span id="connectionStatus" class="status-badge">연결 대기 중</span>
+        <div class="btn-group">
+            <button id="btnConnect">1. 기기 검색 및 페어링</button>
+            <button id="btnDisconnect" class="danger" disabled>해제</button>
+        </div>
+        <div class="btn-group" style="margin-top: 10px;">
+            <button id="btnProvision" class="success" disabled>2. 프로비저닝 전송</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📋 실시간 로그</h2>
+        <div id="log"></div>
+    </div>
 
     <script>
-        // nRF Connect에서 확인된 128-bit 커스텀 Service UUID
-        const MAIN_SERVICE_UUID = '7941dc24-0ee5-a9e0-93f3-a3b50100406e'; 
-        const SUB_SERVICE_UUID  = '0000feb3-0000-1000-8000-00805f9b34fb'; // 0xFEB3
+        // 타겟 메인/보조 Service UUID 및 Characteristic UUID
+        const MAIN_SERVICE_UUID = '7941dc24-0ee5-a9e0-93f3-a3b50100406e';
+        const SUB_SERVICE_UUID  = '0000feb3-0000-1000-8000-00805f9b34fb';
 
         let bluetoothDevice = null;
         let gattServer = null;
@@ -41,12 +68,14 @@
         let targetCharacteristic = null;
 
         const logElem = document.getElementById('log');
+        const statusBadge = document.getElementById('connectionStatus');
+
         function log(msg) {
             logElem.innerText += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
             logElem.scrollTop = logElem.scrollHeight;
         }
 
-        // 1. 기기 검색 및 연결
+        // 1. 기기 검색 및 페어링
         document.getElementById('btnConnect').addEventListener('click', async () => {
             if (!navigator.bluetooth) {
                 log('❌ 이 브라우저는 Web Bluetooth를 지원하지 않습니다.');
@@ -54,106 +83,97 @@
             }
 
             try {
-                log('🔍 주변 BLE 기기 스캔 중...');
+                log('🔍 동일 UUID 지원 기기 스캔 시작...');
                 
-                // MULTI-ROLE0 모듈에 존재하는 정확한 Service UUID들을 명시
+                // 타겟 UUID 기기들만 정밀 필터링하여 스캔
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
+                    filters: [
+                        { services: [MAIN_SERVICE_UUID] },
+                        { services: [SUB_SERVICE_UUID] }
+                    ],
                     optionalServices: [
                         MAIN_SERVICE_UUID,
                         SUB_SERVICE_UUID,
-                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
-                        '00001801-0000-1000-8000-00805f9b34fb'  // Generic Attribute
+                        '00001800-0000-1000-8000-00805f9b34fb',
+                        '00001801-0000-1000-8000-00805f9b34fb'
                     ]
                 });
 
-                log(`✅ 기기 선택됨: ${bluetoothDevice.name || 'MULTI-ROLE0'}`);
+                log(`✅ 선택된 기기: ${bluetoothDevice.name || 'MULTI-ROLE0'}`);
                 log(`🆔 디바이스 ID: ${bluetoothDevice.id}`);
 
                 bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
-                // GATT 서버 연결
-                log('🔌 GATT 서버에 연결 중...');
+                log('🔌 GATT 서버 연결 중...');
                 gattServer = await bluetoothDevice.gatt.connect();
-                log('🎉 GATT 서버 연결 성공!');
 
-                // 메인 커스텀 서비스 가져오기 시도
+                // Service 접근 시도
                 try {
-                    log(`📡 메인 서비스(${MAIN_SERVICE_UUID}) 접근 중...`);
                     targetService = await gattServer.getPrimaryService(MAIN_SERVICE_UUID);
-                    log('✅ 메인 서비스 연결 완료!');
                 } catch (e) {
-                    log(`ℹ️ 메인 서비스 실패, 보조 서비스(${SUB_SERVICE_UUID})로 시도 중...`);
                     targetService = await gattServer.getPrimaryService(SUB_SERVICE_UUID);
-                    log('✅ 보조 서비스 연결 완료!');
                 }
 
-                // 서비스 내의 Characteristic(특성) 스캔
-                if (targetService) {
-                    const characteristics = await targetService.getCharacteristics();
-                    log(`📝 서비스 내 발견된 Characteristic 개수: ${characteristics.length}개`);
+                // Characteristic 접근 시도
+                const characteristics = await targetService.getCharacteristics();
+                if (characteristics.length > 0) {
+                    targetCharacteristic = characteristics[0];
+                    log(`✅ 통신 채널 준비 완료 (Char UUID: ${targetCharacteristic.uuid})`);
                     
-                    for (const char of characteristics) {
-                        log(`  👉 Char UUID: ${char.uuid}`);
-                    }
-
-                    if (characteristics.length > 0) {
-                        targetCharacteristic = characteristics[0]; // 첫 번째 Characteristic 선택
-                        log(`✅ 통신용 Target Characteristic 설정 완료!`);
-                    }
+                    statusBadge.innerText = `연결됨: ${bluetoothDevice.name || '모듈'}`;
+                    statusBadge.classList.add('connected');
+                    updateUI(true);
+                } else {
+                    log('❌ 쓰기 가능한 Characteristic을 찾지 못했습니다.');
                 }
 
-                updateUI(true);
-
             } catch (error) {
-                log(`❌ 연결 실패: ${error.message}`);
+                log(`❌ 연결 취소 또는 실패: ${error.message}`);
             }
         });
 
-        // 2. 데이터 읽기 (Read)
-        document.getElementById('btnRead').addEventListener('click', async () => {
+        // 2. 프로비저닝 데이터 패킷 구성 및 전송
+        document.getElementById('btnProvision').addEventListener('click', async () => {
             if (!targetCharacteristic) {
-                log('❌ 연결된 Characteristic이 없습니다.');
+                log('❌ 연결된 기기가 없습니다.');
                 return;
             }
 
             try {
-                log('📖 데이터 읽기 요청 중...');
-                const dataView = await targetCharacteristic.readValue();
-                const rawData = new Uint8Array(dataView.buffer);
-                log(`📥 수신 (Hex): ${Array.from(rawData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
-            } catch (error) {
-                log(`❌ 데이터 읽기 실패: ${error.message}`);
-            }
-        });
+                // UI 입력값 파싱 (공백 분할 바이트 배열 변환)
+                const netKeyStr = document.getElementById('netKey').value.trim().split(' ');
+                const appKeyStr = document.getElementById('appKey').value.trim().split(' ');
+                const addrVal = parseInt(document.getElementById('unicastAddr').value, 16);
 
-        // 3. 데이터 쓰기 (Write)
-        document.getElementById('btnWrite').addEventListener('click', async () => {
-            if (!targetCharacteristic) {
-                log('❌ 연결된 Characteristic이 없습니다.');
-                return;
-            }
+                log('⚙️ 프로비저닝 패킷 생성 중...');
 
-            try {
-                // 전송 테스트 데이터 (바이트 배열)
-                const sendData = new Uint8Array([0x01, 0xFF, 0x0A]);
-                log(`📤 데이터 전송 중: ${Array.from(sendData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}`);
+                // 예시: 헤더[0xAA, 0x55] + UnicastAddr[2B] + NetKey[16B] + AppKey[16B] 구조 패킷 생성
+                // (사용하시는 펌웨어 수신 규격 구조에 맞게 순서를 조정하시면 됩니다)
+                let packet = [0xAA, 0x55, (addrVal >> 8) & 0xFF, addrVal & 0xFF];
                 
-                // Write 속성에 맞춰 전송
+                netKeyStr.forEach(hex => packet.push(parseInt(hex, 16) || 0x00));
+                appKeyStr.forEach(hex => packet.push(parseInt(hex, 16) || 0x00));
+
+                const sendData = new Uint8Array(packet);
+
+                log(`📤 프로비저닝 명령 전송 (${sendData.length} Bytes)...`);
+                log(`   주소: 0x${addrVal.toString(16).padStart(4, '0').toUpperCase()}`);
+
                 if (targetCharacteristic.properties.write) {
                     await targetCharacteristic.writeValueWithResponse(sendData);
-                } else if (targetCharacteristic.properties.writeWithoutResponse) {
-                    await targetCharacteristic.writeValueWithoutResponse(sendData);
                 } else {
-                    await targetCharacteristic.writeValueWithResponse(sendData);
+                    await targetCharacteristic.writeValueWithoutResponse(sendData);
                 }
-                log('✅ 데이터 전송 성공!');
+
+                log('🎉 프로비저닝 데이터 전송 성공!');
+                log('💡 다음 기기를 프로비저닝하려면 [해제] 후 2번째 모듈을 연결하세요.');
+
             } catch (error) {
-                log(`❌ 데이터 전송 실패: ${error.message}`);
+                log(`❌ 프로비저닝 실패: ${error.message}`);
             }
         });
 
-        // 4. 연결 해제
+        // 연결 해제
         document.getElementById('btnDisconnect').addEventListener('click', () => {
             if (bluetoothDevice && bluetoothDevice.gatt.connected) {
                 bluetoothDevice.gatt.disconnect();
@@ -161,15 +181,16 @@
         });
 
         function onDisconnected() {
-            log('🔌 기기와의 연결이 해제되었습니다.');
+            log('🔌 기기와 연결이 해제되었습니다.');
+            statusBadge.innerText = '연결 대기 중';
+            statusBadge.classList.remove('connected');
             updateUI(false);
         }
 
         function updateUI(connected) {
             document.getElementById('btnConnect').disabled = connected;
             document.getElementById('btnDisconnect').disabled = !connected;
-            document.getElementById('btnRead').disabled = !connected;
-            document.getElementById('btnWrite').disabled = !connected;
+            document.getElementById('btnProvision').disabled = !connected;
         }
     </script>
 </body>
