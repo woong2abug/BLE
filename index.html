@@ -59,11 +59,11 @@
                     // filters: [{ namePrefix: 'MYCOMPANY_' }],
                     
                     // 스캔할 서비스 UUID 지정 (필수)
-                    filters: [{ services: [SERVICE_UUID] }],
+                    // filters: [{ services: [SERVICE_UUID] }],
                     
                     // 모든 장치를 스캔하고 싶을 경우 (optionalServices 필수 지정):
-                    // acceptAllDevices: true,
-                    // optionalServices: [SERVICE_UUID]
+                    acceptAllDevices: true,
+                    optionalServices: [SERVICE_UUID]
                 });
 
                 log(`✅ 기기 선택됨: ${bluetoothDevice.name || '알 수 없는 기기'} (${bluetoothDevice.id})`);
