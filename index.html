@@ -44,7 +44,7 @@
         <h2>📱 대상 모듈 제어</h2>
         <span id="connectionStatus" class="status-badge">연결 대기 중</span>
         <div class="btn-group">
-            <button id="btnConnect">1. 기기 검색 및 페어링</button>
+            <button id="btnConnect">1. 주변 모든 BLE 기기 스캔</button>
             <button id="btnDisconnect" class="danger" disabled>해제</button>
         </div>
         <div class="btn-group" style="margin-top: 10px;">
@@ -58,7 +58,7 @@
     </div>
 
     <script>
-        // 타겟 메인/보조 Service UUID 및 Characteristic UUID
+        // 타겟 메인/보조 Service UUID
         const MAIN_SERVICE_UUID = '7941dc24-0ee5-a9e0-93f3-a3b50100406e';
         const SUB_SERVICE_UUID  = '0000feb3-0000-1000-8000-00805f9b34fb';
 
@@ -75,7 +75,7 @@
             logElem.scrollTop = logElem.scrollHeight;
         }
 
-        // 1. 기기 검색 및 페어링
+        // 1. 기기 검색 및 페어링 (모든 BLE 기기 스캔)
         document.getElementById('btnConnect').addEventListener('click', async () => {
             if (!navigator.bluetooth) {
                 log('❌ 이 브라우저는 Web Bluetooth를 지원하지 않습니다.');
@@ -83,14 +83,11 @@
             }
 
             try {
-                log('🔍 동일 UUID 지원 기기 스캔 시작...');
+                log('🔍 주변 모든 BLE 기기 스캔 시작...');
                 
-                // 타겟 UUID 기기들만 정밀 필터링하여 스캔
+                // 필터 없이 주변 모든 BLE 기기 스캔 허용
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { services: [MAIN_SERVICE_UUID] },
-                        { services: [SUB_SERVICE_UUID] }
-                    ],
+                    acceptAllDevices: true,
                     optionalServices: [
                         MAIN_SERVICE_UUID,
                         SUB_SERVICE_UUID,
@@ -99,7 +96,7 @@
                     ]
                 });
 
-                log(`✅ 선택된 기기: ${bluetoothDevice.name || 'MULTI-ROLE0'}`);
+                log(`✅ 선택된 기기: ${bluetoothDevice.name || '이름 없음'}`);
                 log(`🆔 디바이스 ID: ${bluetoothDevice.id}`);
 
                 bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
@@ -111,20 +108,29 @@
                 try {
                     targetService = await gattServer.getPrimaryService(MAIN_SERVICE_UUID);
                 } catch (e) {
-                    targetService = await gattServer.getPrimaryService(SUB_SERVICE_UUID);
+                    try {
+                        targetService = await gattServer.getPrimaryService(SUB_SERVICE_UUID);
+                    } catch (err) {
+                        log(`ℹ️ 타겟 전용 서비스를 찾지 못해 모든 서비스 스캔을 시도합니다.`);
+                        const services = await gattServer.getPrimaryServices();
+                        if (services.length > 0) targetService = services[0];
+                    }
                 }
 
-                // Characteristic 접근 시도
-                const characteristics = await targetService.getCharacteristics();
-                if (characteristics.length > 0) {
-                    targetCharacteristic = characteristics[0];
-                    log(`✅ 통신 채널 준비 완료 (Char UUID: ${targetCharacteristic.uuid})`);
-                    
-                    statusBadge.innerText = `연결됨: ${bluetoothDevice.name || '모듈'}`;
-                    statusBadge.classList.add('connected');
-                    updateUI(true);
+                if (targetService) {
+                    const characteristics = await targetService.getCharacteristics();
+                    if (characteristics.length > 0) {
+                        targetCharacteristic = characteristics[0];
+                        log(`✅ 통신 채널 준비 완료 (Char UUID: ${targetCharacteristic.uuid})`);
+                        
+                        statusBadge.innerText = `연결됨: ${bluetoothDevice.name || '기기'}`;
+                        statusBadge.classList.add('connected');
+                        updateUI(true);
+                    } else {
+                        log('⚠️ 특성(Characteristic)을 찾을 수 없습니다.');
+                    }
                 } else {
-                    log('❌ 쓰기 가능한 Characteristic을 찾지 못했습니다.');
+                    log('❌ 연결된 기기에서 서비스(Service)를 찾지 못했습니다.');
                 }
 
             } catch (error) {
@@ -140,24 +146,20 @@
             }
 
             try {
-                // UI 입력값 파싱 (공백 분할 바이트 배열 변환)
                 const netKeyStr = document.getElementById('netKey').value.trim().split(' ');
                 const appKeyStr = document.getElementById('appKey').value.trim().split(' ');
                 const addrVal = parseInt(document.getElementById('unicastAddr').value, 16);
 
                 log('⚙️ 프로비저닝 패킷 생성 중...');
 
-                // 예시: 헤더[0xAA, 0x55] + UnicastAddr[2B] + NetKey[16B] + AppKey[16B] 구조 패킷 생성
-                // (사용하시는 펌웨어 수신 규격 구조에 맞게 순서를 조정하시면 됩니다)
                 let packet = [0xAA, 0x55, (addrVal >> 8) & 0xFF, addrVal & 0xFF];
-                
                 netKeyStr.forEach(hex => packet.push(parseInt(hex, 16) || 0x00));
                 appKeyStr.forEach(hex => packet.push(parseInt(hex, 16) || 0x00));
 
                 const sendData = new Uint8Array(packet);
 
                 log(`📤 프로비저닝 명령 전송 (${sendData.length} Bytes)...`);
-                log(`   주소: 0x${addrVal.toString(16).padStart(4, '0').toUpperCase()}`);
+                log(`   할당 주소: 0x${addrVal.toString(16).padStart(4, '0').toUpperCase()}`);
 
                 if (targetCharacteristic.properties.write) {
                     await targetCharacteristic.writeValueWithResponse(sendData);
@@ -166,7 +168,6 @@
                 }
 
                 log('🎉 프로비저닝 데이터 전송 성공!');
-                log('💡 다음 기기를 프로비저닝하려면 [해제] 후 2번째 모듈을 연결하세요.');
 
             } catch (error) {
                 log(`❌ 프로비저닝 실패: ${error.message}`);
